@@ -16,7 +16,11 @@ COOKIE_WRITABLE_PATH = '/tmp/youtube_cookies.txt'
 
 if os.path.exists(COOKIE_SECRET_PATH):
     shutil.copy(COOKIE_SECRET_PATH, COOKIE_WRITABLE_PATH)
-
+if os.path.exists(COOKIE_SECRET_PATH):
+    shutil.copy(COOKIE_SECRET_PATH, COOKIE_WRITABLE_PATH)
+    print(f"[cookies] copiado com sucesso, {os.path.getsize(COOKIE_WRITABLE_PATH)} bytes")
+else:
+    print("[cookies] ARQUIVO NÃO ENCONTRADO em /etc/secrets/ — verifique o nome do Secret File no Render")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 
