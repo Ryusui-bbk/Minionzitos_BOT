@@ -10,7 +10,11 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import re
 from keep_alive import keep_alive
-
+import ctypes
+try:
+    ctypes.CDLL('libopus.so.0')
+except Exception as e:
+    print(f"Erro ao carregar libopus via ctypes: {e}")
 # configuracao do spotify puxando do render de forma segura
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
