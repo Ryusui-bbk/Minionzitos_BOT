@@ -10,10 +10,12 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import re
 from keep_alive import keep_alive
 
+# variaveis de ambiente injetadas pelo container render
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
+# autenticacao da api spotify
 sp = None
 if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
     try:
@@ -22,8 +24,9 @@ if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
             client_secret=SPOTIFY_CLIENT_SECRET
         ))
     except Exception as e:
-        print(f"Erro no Spotify: {e}")
+        print(f"aviso api spotify: {e}")
 
+# autenticacao do LLM google gemini
 model = None
 if GEMINI_KEY:
     try:
@@ -41,7 +44,7 @@ if GEMINI_KEY:
             system_instruction=personalidade
         )
     except Exception as e:
-        print(f"Erro no Gemini: {e}")
+        print(f"aviso api gemini: {e}")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -49,7 +52,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 queues = {}
 
-# Configuracoes do yt_dlp otimizadas para nao tomar block no Render
+# parametros de encapsulamento para evitar evasao de ip (anti-bot bypass)
 ydl_opts = {
     'format': 'bestaudio/best',
     'noplaylist': True,
@@ -58,8 +61,8 @@ ydl_opts = {
     'default_search': 'ytsearch',
     'nocheckcertificate': True,
     'ignoreerrors': True,
-    'logtostderr': False,
-    'rm_cachedir': True
+    'source_address': '0.0.0.0',
+    'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}
 }
 
 ffmpeg_options = {
@@ -68,47 +71,53 @@ ffmpeg_options = {
 }
 
 def get_spotify_tracks(url):
-    if not sp: return []
+    if not sp: 
+        return []
     tracks = []
     try:
         if "track" in url:
             track_info = sp.track(url)
-            artistas = track_info.get('artists', [{}])
-            nome_artista = artistas[0].get('name', 'Desconhecido')
-            tracks.append(f"{track_info['name']} {nome_artista}")
+            artists = track_info.get('artists', [])
+            artist_name = artists[0]['name'] if artists else "Desconhecido"
+            tracks.append(f"{track_info['name']} {artist_name}")
         elif "playlist" in url:
-            playlist_id = url.split("playlist/")[1].split("?")[0]
-            results = sp.playlist_items(playlist_id)
-            for item in results.get('items', []):
-                if item.get('track'):
-                    t = item['track']
-                    artistas = t.get('artists', [{}])
-                    nome_artista = artistas[0].get('name', 'Desconhecido')
-                    tracks.append(f"{t['name']} {nome_artista}")
+            match = re.search(r"playlist/([^?]+)", url)
+            if match:
+                playlist_id = match.group(1)
+                results = sp.playlist_items(playlist_id)
+                for item in results.get('items', []):
+                    if item.get('track'):
+                        t = item['track']
+                        artists = t.get('artists', [])
+                        artist_name = artists[0]['name'] if artists else "Desconhecido"
+                        tracks.append(f"{t['name']} {artist_name}")
     except Exception as e:
-        print(f"Erro Spotify: {e}")
+        print(f"erro parser spotify: {e}")
     return tracks
 
 def check_queue(ctx):
     if ctx.guild.id in queues and queues[ctx.guild.id]:
         proxima = queues[ctx.guild.id].pop(0)
+        busca = proxima['url']
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
-                info = ydl.extract_info(proxima['search'], download=False)
-                if 'entries' in info and len(info['entries']) > 0:
+                query = busca if (busca.startswith("http://") or busca.startswith("https://")) else f"ytsearch:{busca}"
+                info = ydl.extract_info(query, download=False)
+                
+                if info and 'entries' in info and len(info['entries']) > 0:
                     video = info['entries'][0]
                 else:
                     video = info
-                
-                url = video['url']
-                title = video.get('title', 'Música')
-                
-                source = discord.FFmpegPCMAudio(url, **ffmpeg_options)
-                ctx.voice_client.play(source, after=lambda e: check_queue(ctx))
-                asyncio.run_coroutine_threadsafe(ctx.send(f"Tocando agora: **{title}**"), bot.loop)
+
+                if video and 'url' in video:
+                    source = discord.FFmpegPCMAudio(video['url'], **ffmpeg_options)
+                    ctx.voice_client.play(source, after=lambda e: check_queue(ctx))
+                    asyncio.run_coroutine_threadsafe(ctx.send(f"Tocando agora: **{video.get('title', 'Música')}**"), bot.loop)
+                else:
+                    raise Exception()
             except Exception:
-                asyncio.run_coroutine_threadsafe(ctx.send("Não consegui tocar a próxima música da fila."), bot.loop)
+                asyncio.run_coroutine_threadsafe(ctx.send(f"Não consegui reproduzir a próxima música."), bot.loop)
                 return check_queue(ctx)
 
 @bot.command(name="play")
@@ -125,7 +134,7 @@ async def play(ctx, *, search: str = None):
         url_direta = ctx.message.attachments[0].url
         titulo = ctx.message.attachments[0].filename
         if ctx.voice_client.is_playing():
-            queues[ctx.guild.id].append({'search': url_direta, 'title': titulo})
+            queues[ctx.guild.id].append({'url': url_direta, 'title': titulo})
             return await ctx.send(f"Adicionado à fila: **{titulo}**")
         else:
             source = discord.FFmpegPCMAudio(url_direta, **ffmpeg_options)
@@ -140,14 +149,17 @@ async def play(ctx, *, search: str = None):
         if musicas:
             search = musicas[0]
             for m in musicas[1:]:
-                queues[ctx.guild.id].append({'search': m, 'title': m})
+                queues[ctx.guild.id].append({'url': m, 'title': m})
         else:
-            return await ctx.send("Link do Spotify quebrado.")
+            return await ctx.send("Não consegui extrair dados válidos da API do Spotify.")
 
     async with ctx.typing():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
-                info = ydl.extract_info(search if search.startswith("http") else f"ytsearch:{search}", download=False)
+                is_url = search.startswith("http://") or search.startswith("https://")
+                query = search if is_url else f"ytsearch:{search}"
+                info = ydl.extract_info(query, download=False)
+                
                 if not info:
                     return await ctx.send("Achei nada no YouTube com isso aí não.")
                 
@@ -156,14 +168,17 @@ async def play(ctx, *, search: str = None):
                 else:
                     video = info
 
-                file_to_play = video['url']
+                file_to_play = video.get('url')
                 title = video.get('title', 'Música')
             except Exception as e:
-                print(f"Erro yt-dlp: {e}")
+                print(f"excecao yt-dlp: {e}")
                 return await ctx.send("O YouTube bloqueou a busca desse servidor grátis. Tente mandar o link direto do vídeo.")
 
+    if not file_to_play:
+        return await ctx.send("Falha na alocação de buffer do fluxo de áudio.")
+
     if ctx.voice_client.is_playing():
-        queues[ctx.guild.id].append({'search': search, 'title': title})
+        queues[ctx.guild.id].append({'url': file_to_play, 'title': title})
         await ctx.send(f"Adicionado à fila: **{title}**")
     else:
         source = discord.FFmpegPCMAudio(file_to_play, **ffmpeg_options)
@@ -173,29 +188,32 @@ async def play(ctx, *, search: str = None):
 @bot.command(name="skip")
 async def skip(ctx):
     if not ctx.voice_client or not ctx.voice_client.is_playing():
-        return await ctx.send("Não tá tocando nada, seu jumento!")
+        return await ctx.send("Não há fluxos ativos em reprodução no momento.")
     ctx.voice_client.stop()
     await ctx.send("Música pulada!")
 
 @bot.command(name="talk")
 async def talk(ctx, *, mensagem: str = None):
     if not mensagem:
-        return await ctx.send("Manda alguma mensagem para eu responder, ô jumento!")
+        return await ctx.send("O parâmetro textual obrigatório está ausente na chamada do comando.")
     if not model:
-        return await ctx.reply("Tô sem saco (Gemini desconfigurado nas variáveis do Render).")
+        return await ctx.reply("A instância LLM Gemini não pôde ser inicializada localmente.")
 
     async with ctx.typing():
         try:
-            # Correção final do Gemini para aceitar strings sem quebras de bloco
-            response = model.generate_content(mensagem)
-            await ctx.reply(response.text)
+            prompt_limpo = str(mensagem).replace('\\', '').strip()
+            response = model.generate_content(prompt_limpo)
+            if response and response.text:
+                await ctx.reply(response.text)
+            else:
+                raise Exception()
         except Exception as e:
-            print(f"Erro Gemini: {e}")
+            print(f"excecao chamada gemini: {e}")
             await ctx.reply("Deu erro para processar sua pergunta burra aqui.")
 
 @bot.event
 async def on_ready():
-    print(f"Bot {bot.user.name} online!")
+    print(f"Instância de gateway ativa. Sincronizado como {bot.user.name}.")
 
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN'))
