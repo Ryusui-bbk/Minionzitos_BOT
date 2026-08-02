@@ -1,8 +1,7 @@
-discord.py
+py-cord
 flask
 yt-dlp
 google-generativeai
 spotipy
 PyNaCl
 imageio-ffmpeg
-
