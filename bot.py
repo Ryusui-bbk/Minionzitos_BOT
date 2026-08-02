@@ -9,7 +9,33 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import re
 from keep_alive import keep_alive
+import requests
 
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+
+def youtube_search_url(query):
+    """Busca via API oficial (evita o bloqueio 403 do scraping)."""
+    if not YOUTUBE_API_KEY:
+        return None
+    try:
+        r = requests.get(
+            "https://www.googleapis.com/youtube/v3/search",
+            params={
+                "part": "snippet",
+                "q": query,
+                "type": "video",
+                "maxResults": 1,
+                "key": YOUTUBE_API_KEY,
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        if items:
+            return f"https://www.youtube.com/watch?v={items[0]['id']['videoId']}"
+    except Exception as e:
+        print(f"erro youtube api: {e}")
+    return None
 # variaveis de ambiente injetadas pelo container render
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
@@ -40,9 +66,9 @@ if GEMINI_KEY:
             "Sobre a história: O grupo foi unido em um intervalo que ninguém escutava nada, todos são nerds fudidos..."
         )
         model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash',
-            system_instruction=personalidade
-        )
+        model_name='gemini-2.5-flash',
+        system_instruction=personalidade
+)
     except Exception as e:
         print(f"aviso api gemini: {e}")
 
@@ -157,7 +183,10 @@ async def play(ctx, *, search: str = None):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 is_url = search.startswith("http://") or search.startswith("https://")
-                query = search if is_url else f"ytsearch:{search}"
+                if busca.startswith("http://") or busca.startswith("https://"):
+                    query = busca
+                else:
+                    query = youtube_search_url(busca) or f"ytsearch:{busca}"
                 info = ydl.extract_info(query, download=False)
                 
                 if not info:
