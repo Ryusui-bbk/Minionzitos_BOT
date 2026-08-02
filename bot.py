@@ -10,7 +10,13 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import re
 from keep_alive import keep_alive
 import requests
+import shutil
 
+COOKIE_SECRET_PATH = '/etc/secrets/youtube_cookies.txt'
+COOKIE_WRITABLE_PATH = '/tmp/youtube_cookies.txt'
+
+if os.path.exists(COOKIE_SECRET_PATH):
+    shutil.copy(COOKIE_SECRET_PATH, COOKIE_WRITABLE_PATH)
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 def youtube_search_url(query):
@@ -89,7 +95,7 @@ ydl_opts = {
     'ignoreerrors': True,
     'source_address': '0.0.0.0',
     'extractor_args': {'youtube': {'player_client': ['android', 'ios']}},
-    'cookiefile': '/etc/secrets/youtube_cookies.txt',
+    'cookiefile': COOKIE_WRITABLE_PATH if os.path.exists(COOKIE_WRITABLE_PATH) else None,
 }
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
