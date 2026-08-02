@@ -4,7 +4,6 @@ import yt_dlp
 import os
 import asyncio
 import google.generativeai as genai
-import random
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import re
@@ -17,7 +16,9 @@ COOKIE_WRITABLE_PATH = '/tmp/youtube_cookies.txt'
 
 if os.path.exists(COOKIE_SECRET_PATH):
     shutil.copy(COOKIE_SECRET_PATH, COOKIE_WRITABLE_PATH)
+
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+
 
 def youtube_search_url(query):
     """Busca via API oficial (evita o bloqueio 403 do scraping)."""
@@ -42,6 +43,8 @@ def youtube_search_url(query):
     except Exception as e:
         print(f"erro youtube api: {e}")
     return None
+
+
 # variaveis de ambiente injetadas pelo container render
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
@@ -72,15 +75,15 @@ if GEMINI_KEY:
             "Sobre a história: O grupo foi unido em um intervalo que ninguém escutava nada, todos são nerds fudidos..."
         )
         model = genai.GenerativeModel(
-        model_name='gemini-2.5-flash',
-        system_instruction=personalidade
-)
+            model_name='gemini-2.5-flash',
+            system_instruction=personalidade
+        )
     except Exception as e:
         print(f"aviso api gemini: {e}")
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, case_insensitive=True)
 
 queues = {}
 
@@ -97,13 +100,15 @@ ydl_opts = {
     'extractor_args': {'youtube': {'player_client': ['android', 'ios']}},
     'cookiefile': COOKIE_WRITABLE_PATH if os.path.exists(COOKIE_WRITABLE_PATH) else None,
 }
+
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
 }
 
+
 def get_spotify_tracks(url):
-    if not sp: 
+    if not sp:
         return []
     tracks = []
     try:
@@ -127,20 +132,31 @@ def get_spotify_tracks(url):
         print(f"erro parser spotify: {e}")
     return tracks
 
+
+def _resolve_video(info):
+    """Extrai o vídeo válido de um resultado do yt_dlp, ignorando entradas None."""
+    if not info:
+        return None
+    if 'entries' in info:
+        entries = [e for e in info['entries'] if e]
+        return entries[0] if entries else None
+    return info
+
+
 def check_queue(ctx):
     if ctx.guild.id in queues and queues[ctx.guild.id]:
         proxima = queues[ctx.guild.id].pop(0)
         busca = proxima['url']
-        
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
-                query = busca if (busca.startswith("http://") or busca.startswith("https://")) else f"ytsearch:{busca}"
-                info = ydl.extract_info(query, download=False)
-                
-                if info and 'entries' in info and len(info['entries']) > 0:
-                    video = info['entries'][0]
+                if busca.startswith("http://") or busca.startswith("https://"):
+                    query = busca
                 else:
-                    video = info
+                    query = youtube_search_url(busca) or f"ytsearch:{busca}"
+
+                info = ydl.extract_info(query, download=False)
+                video = _resolve_video(info)
 
                 if video and 'url' in video:
                     source = discord.FFmpegPCMAudio(video['url'], **ffmpeg_options)
@@ -149,8 +165,9 @@ def check_queue(ctx):
                 else:
                     raise Exception()
             except Exception:
-                asyncio.run_coroutine_threadsafe(ctx.send(f"Não consegui reproduzir a próxima música."), bot.loop)
+                asyncio.run_coroutine_threadsafe(ctx.send("Não consegui reproduzir a próxima música."), bot.loop)
                 return check_queue(ctx)
+
 
 @bot.command(name="play")
 async def play(ctx, *, search: str = None):
@@ -188,20 +205,16 @@ async def play(ctx, *, search: str = None):
     async with ctx.typing():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
-                is_url = search.startswith("http://") or search.startswith("https://")
-                if busca.startswith("http://") or busca.startswith("https://"):
-                    query = busca
+                if search.startswith("http://") or search.startswith("https://"):
+                    query = search
                 else:
-                    query = youtube_search_url(busca) or f"ytsearch:{busca}"
+                    query = youtube_search_url(search) or f"ytsearch:{search}"
+
                 info = ydl.extract_info(query, download=False)
-                
-                if not info:
+                video = _resolve_video(info)
+
+                if not video:
                     return await ctx.send("Achei nada no YouTube com isso aí não.")
-                
-                if 'entries' in info and len(info['entries']) > 0:
-                    video = info['entries'][0]
-                else:
-                    video = info
 
                 file_to_play = video.get('url')
                 title = video.get('title', 'Música')
@@ -220,12 +233,14 @@ async def play(ctx, *, search: str = None):
         ctx.voice_client.play(source, after=lambda e: check_queue(ctx))
         await ctx.send(f"Tocando agora: **{title}**")
 
+
 @bot.command(name="skip")
 async def skip(ctx):
     if not ctx.voice_client or not ctx.voice_client.is_playing():
         return await ctx.send("Não há fluxos ativos em reprodução no momento.")
     ctx.voice_client.stop()
     await ctx.send("Música pulada!")
+
 
 @bot.command(name="talk")
 async def talk(ctx, *, mensagem: str = None):
@@ -246,9 +261,11 @@ async def talk(ctx, *, mensagem: str = None):
             print(f"excecao chamada gemini: {e}")
             await ctx.reply("Deu erro para processar sua pergunta burra aqui.")
 
+
 @bot.event
 async def on_ready():
     print(f"Instância de gateway ativa. Sincronizado como {bot.user.name}.")
+
 
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN'))
