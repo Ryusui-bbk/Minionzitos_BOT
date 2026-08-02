@@ -5,4 +5,4 @@ google-generativeai
 spotipy
 PyNaCl
 imageio-ffmpeg
-opus-file
+
