@@ -10,7 +10,6 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import re
 from keep_alive import keep_alive
-import ctypes
 # configuracao do spotify puxando do render de forma segura
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
