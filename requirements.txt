@@ -1,7 +1,8 @@
-py-cord
+py-cord[voice]
 flask
 yt-dlp
 google-generativeai
 spotipy
 PyNaCl
 imageio-ffmpeg
+
