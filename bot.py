@@ -64,15 +64,15 @@ def get_spotify_tracks(url):
     try:
         if "track" in url:
             track_info = sp.track(url)
-            track_name = f"{track_info['name']} - {track_info['artists']['name']}"
+            track_name = f"{track_info['name']} - {track_info['artists'][0]['name']}"
             tracks.append(track_name)
         elif "playlist" in url:
-            playlist_id = url.split("playlist/").split("?")
+            playlist_id = url.split("playlist/")[1].split("?")[0]
             results = sp.playlist_items(playlist_id)
             for item in results['items']:
                 if item['track']:
                     track = item['track']
-                    tracks.append(f"{track['name']} - {track['artists']['name']}")
+                    tracks.append(f"{track['name']} - {track['artists'][0]['name']}")
     except Exception as e:
         print(f"erro ao buscar no spotify: {e}")
     return tracks
@@ -85,8 +85,8 @@ def check_queue(ctx):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(f"ytsearch:{proxima['url']}", download=False)
                 if info and 'entries' in info and len(info['entries']) > 0:
-                    proxima['url'] = info['entries']['url']
-                    proxima['title'] = info['entries']['title']
+                    proxima['url'] = info['entries'][0]['url']
+                    proxima['title'] = info['entries'][0]['title']
                 else:
                     asyncio.run_coroutine_threadsafe(
                         ctx.send("Não achei essa porra no YouTube, pulando..."), bot.loop
@@ -114,8 +114,8 @@ async def play(ctx, *, search: str = None):
     title = ""
     
     if ctx.message.attachments:
-        file_to_play = ctx.message.attachments.url
-        title = ctx.message.attachments.filename
+        file_to_play = ctx.message.attachments[0].url
+        title = ctx.message.attachments[0].filename
     elif search and os.path.exists(os.path.join("temp", search)):
         file_to_play = os.path.join("temp", search)
         title = search
@@ -128,7 +128,10 @@ async def play(ctx, *, search: str = None):
                 if not info:
                     return await ctx.send("Achei nada no YouTube com isso aí não.")
                 if 'entries' in info and len(info['entries']) > 0:
-                    info = info['entries']
+                    info_entry = info['entries'][0]
+                    file_to_play = info_entry['url']
+                    title = info_entry['title']
+                elif 'url' in info:
                     file_to_play = info['url']
                     title = info['title']
                 else:
