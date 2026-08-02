@@ -11,10 +11,12 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import re
 from keep_alive import keep_alive
 import ctypes
+import nacl.secret
 try:
-    ctypes.CDLL('libopus.so.0')
+    if not discord.opus.is_loaded():
+        discord.opus.load_opus()
 except Exception as e:
-    print(f"Erro ao carregar libopus via ctypes: {e}")
+    print(f"aviso ao carregar opus: {e}")
 # configuracao do spotify puxando do render de forma segura
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
