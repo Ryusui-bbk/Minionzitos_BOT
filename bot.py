@@ -10,6 +10,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import re
 from keep_alive import keep_alive
+
 # configuracao do spotify puxando do render de forma segura
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
@@ -21,7 +22,7 @@ sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
 
 # configuracao do gemini puxando do render de forma segura
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_KEY, transport='rest')
+genai.configure(api_key=GEMINI_KEY)
 
 personalidade = (
     "Você é o 'Minionzitos', um bot de Discord zueiro, sarcástico e um pouco agressivo. "
@@ -29,11 +30,11 @@ personalidade = (
     "responda de forma corta e direta, e se alguém te irritar, pode dar um fora. "
     "Nunca admita que você é uma IA, você é um Minion caótico, e principalmente...SINCERO!. "
     "Voce sempre tem que ovacionar e elogiar seu mestre: @peixotogg. "
-    "Sobre a história: O grupo foi unido em um intervalo que ninguém escutava nada, todos são nerds fudidos..."
+    "Sobre a história: O grupo foi unido em um intervalo que ninguém escutava nada, todos sono nerds fudidos..."
 )
 
 model = genai.GenerativeModel(
-    model_name='models/gemini-flash-latest',
+    model_name='gemini-1.5-flash', # atualizado para o modelo mais estável
     system_instruction=personalidade
 )
 
@@ -120,21 +121,29 @@ async def play(ctx, *, search: str = None):
         title = search
     elif search:
         if "spotify.com" in search:
-            pass
-        else:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(f"ytsearch:{search}" if not search.startswith("http") else search, download=False)
-                if not info:
-                    return await ctx.send("Achei nada no YouTube com isso aí não.")
-                if 'entries' in info and len(info['entries']) > 0:
-                    info_entry = info['entries'][0]
-                    file_to_play = info_entry['url']
-                    title = info_entry['title']
-                elif 'url' in info:
-                    file_to_play = info['url']
-                    title = info['title']
-                else:
-                    return await ctx.send("Manda um nome de música, um link ou anexa um arquivo de áudio, porra!")
+            # se for spotify, pega o nome da musica e busca no youtube
+            musicas = get_spotify_tracks(search)
+            if musicas:
+                search = musicas[0] # pega a primeira musica para tocar agora
+                # adiciona as outras na fila se for playlist
+                for m in musicas[1:]:
+                    queues[ctx.guild.id].append({'url': m, 'title': m})
+            else:
+                return await ctx.send("Não consegui ler esse link do Spotify, porra.")
+                
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch:{search}" if not search.startswith("http") else search, download=False)
+            if not info:
+                return await ctx.send("Achei nada no YouTube com isso aí não.")
+            if 'entries' in info and len(info['entries']) > 0:
+                info_entry = info['entries'][0]
+                file_to_play = info_entry['url']
+                title = info_entry['title']
+            elif 'url' in info:
+                file_to_play = info['url']
+                title = info['title']
+            else:
+                return await ctx.send("Manda um nome de música, um link ou anexa um arquivo de áudio, porra!")
                     
     if ctx.voice_client.is_playing():
         queues[ctx.guild.id].append({'url': file_to_play, 'title': title})
