@@ -88,9 +88,9 @@ ydl_opts = {
     'nocheckcertificate': True,
     'ignoreerrors': True,
     'source_address': '0.0.0.0',
-    'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}
+    'extractor_args': {'youtube': {'player_client': ['android', 'ios']}},
+    'cookiefile': '/etc/secrets/youtube_cookies.txt',
 }
-
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
