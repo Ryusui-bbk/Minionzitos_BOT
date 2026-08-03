@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-import yt_dlp
 import os
 import asyncio
 import google.generativeai as genai
@@ -9,52 +8,13 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import re
 from keep_alive import keep_alive
 import requests
-import shutil
-
-COOKIE_SECRET_PATH = '/etc/secrets/youtube_cookies.txt'
-COOKIE_WRITABLE_PATH = '/tmp/youtube_cookies.txt'
-
-if os.path.exists(COOKIE_SECRET_PATH):
-    shutil.copy(COOKIE_SECRET_PATH, COOKIE_WRITABLE_PATH)
-if os.path.exists(COOKIE_SECRET_PATH):
-    shutil.copy(COOKIE_SECRET_PATH, COOKIE_WRITABLE_PATH)
-    print(f"[cookies] copiado com sucesso, {os.path.getsize(COOKIE_WRITABLE_PATH)} bytes")
-else:
-    print("[cookies] ARQUIVO NÃO ENCONTRADO em /etc/secrets/ — verifique o nome do Secret File no Render")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-
-
-def youtube_search_url(query):
-    """Busca via API oficial (evita o bloqueio 403 do scraping)."""
-    if not YOUTUBE_API_KEY:
-        return None
-    try:
-        r = requests.get(
-            "https://www.googleapis.com/youtube/v3/search",
-            params={
-                "part": "snippet",
-                "q": query,
-                "type": "video",
-                "maxResults": 1,
-                "key": YOUTUBE_API_KEY,
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
-        items = r.json().get("items", [])
-        if items:
-            return f"https://www.youtube.com/watch?v={items[0]['id']['videoId']}"
-    except Exception as e:
-        print(f"erro youtube api: {e}")
-    return None
-
 
 # variaveis de ambiente injetadas pelo container render
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
-# autenticacao da api spotify
+# autenticacao da api spotify (usada só pra ler nome de música/artista de links)
 sp = None
 if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
     try:
@@ -91,20 +51,6 @@ bot = commands.Bot(command_prefix="!", intents=intents, case_insensitive=True)
 
 queues = {}
 
-# parametros de encapsulamento para evitar evasao de ip (anti-bot bypass)
-ydl_opts = {
-    'format': 'bestaudio/best',
-    'noplaylist': True,
-    'quiet': True,
-    'no_warnings': True,
-    'default_search': 'ytsearch',
-    'nocheckcertificate': True,
-    'ignoreerrors': True,
-    'source_address': '0.0.0.0',
-    'extractor_args': {'youtube': {'player_client': ['android', 'ios']}},
-    'cookiefile': COOKIE_WRITABLE_PATH if os.path.exists(COOKIE_WRITABLE_PATH) else None,
-}
-
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
@@ -112,6 +58,7 @@ ffmpeg_options = {
 
 
 def get_spotify_tracks(url):
+    """Retorna lista de strings 'nome artista' extraídas de um link de track/playlist do Spotify."""
     if not sp:
         return []
     tracks = []
@@ -137,40 +84,38 @@ def get_spotify_tracks(url):
     return tracks
 
 
-def _resolve_video(info):
-    """Extrai o vídeo válido de um resultado do yt_dlp, ignorando entradas None."""
-    if not info:
-        return None
-    if 'entries' in info:
-        entries = [e for e in info['entries'] if e]
-        return entries[0] if entries else None
-    return info
+def deezer_search_preview(query):
+    """Busca uma prévia de 30s no Deezer (API pública, sem autenticação)."""
+    try:
+        r = requests.get(
+            "https://api.deezer.com/search",
+            params={"q": query},
+            timeout=10,
+        )
+        r.raise_for_status()
+        items = r.json().get("data", [])
+        if items:
+            track = items[0]
+            preview = track.get("preview")
+            if preview:
+                artista = track.get("artist", {}).get("name", "Desconhecido")
+                title = f"{track['title']} - {artista}"
+                return preview, title
+    except Exception as e:
+        print(f"erro busca deezer: {e}")
+    return None, None
 
 
 def check_queue(ctx):
     if ctx.guild.id in queues and queues[ctx.guild.id]:
         proxima = queues[ctx.guild.id].pop(0)
-        busca = proxima['url']
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                if busca.startswith("http://") or busca.startswith("https://"):
-                    query = busca
-                else:
-                    query = youtube_search_url(busca) or f"ytsearch:{busca}"
-
-                info = ydl.extract_info(query, download=False)
-                video = _resolve_video(info)
-
-                if video and 'url' in video:
-                    source = discord.FFmpegPCMAudio(video['url'], **ffmpeg_options)
-                    ctx.voice_client.play(source, after=lambda e: check_queue(ctx))
-                    asyncio.run_coroutine_threadsafe(ctx.send(f"Tocando agora: **{video.get('title', 'Música')}**"), bot.loop)
-                else:
-                    raise Exception()
-            except Exception:
-                asyncio.run_coroutine_threadsafe(ctx.send("Não consegui reproduzir a próxima música."), bot.loop)
-                return check_queue(ctx)
+        try:
+            source = discord.FFmpegPCMAudio(proxima['url'], **ffmpeg_options)
+            ctx.voice_client.play(source, after=lambda e: check_queue(ctx))
+            asyncio.run_coroutine_threadsafe(ctx.send(f"Tocando agora: **{proxima['title']}**"), bot.loop)
+        except Exception:
+            asyncio.run_coroutine_threadsafe(ctx.send("Não consegui reproduzir a próxima música."), bot.loop)
+            return check_queue(ctx)
 
 
 @bot.command(name="play")
@@ -195,47 +140,34 @@ async def play(ctx, *, search: str = None):
             return await ctx.send(f"Tocando agora: **{titulo}**")
 
     if not search:
-        return await ctx.send("Manda um nome de música ou link, porra!")
+        return await ctx.send("Manda um nome de música ou link do Spotify, porra!")
 
     if "spotify.com" in search:
-        musicas = get_spotify_tracks(search)
-        if musicas:
-            search = musicas[0]
-            for m in musicas[1:]:
-                queues[ctx.guild.id].append({'url': m, 'title': m})
-        else:
+        queries = get_spotify_tracks(search)
+        if not queries:
             return await ctx.send("Não consegui extrair dados válidos da API do Spotify.")
+    else:
+        queries = [search]
 
     async with ctx.typing():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                if search.startswith("http://") or search.startswith("https://"):
-                    query = search
-                else:
-                    query = youtube_search_url(search) or f"ytsearch:{search}"
+        preview, title = deezer_search_preview(queries[0])
 
-                info = ydl.extract_info(query, download=False)
-                video = _resolve_video(info)
+        if not preview:
+            return await ctx.send("Não achei uma prévia disponível pra essa música.")
 
-                if not video:
-                    return await ctx.send("Achei nada no YouTube com isso aí não.")
-
-                file_to_play = video.get('url')
-                title = video.get('title', 'Música')
-            except Exception as e:
-                print(f"excecao yt-dlp: {e}")
-                return await ctx.send("O YouTube bloqueou a busca desse servidor grátis. Tente mandar o link direto do vídeo.")
-
-    if not file_to_play:
-        return await ctx.send("Falha na alocação de buffer do fluxo de áudio.")
+        # limita a fila da playlist pra não travar o comando com buscas demais de uma vez
+        for q in queries[1:21]:
+            p, t = deezer_search_preview(q)
+            if p:
+                queues[ctx.guild.id].append({'url': p, 'title': t})
 
     if ctx.voice_client.is_playing():
-        queues[ctx.guild.id].append({'url': file_to_play, 'title': title})
-        await ctx.send(f"Adicionado à fila: **{title}**")
+        queues[ctx.guild.id].append({'url': preview, 'title': title})
+        await ctx.send(f"Adicionado à fila: **{title}** (prévia de 30s)")
     else:
-        source = discord.FFmpegPCMAudio(file_to_play, **ffmpeg_options)
+        source = discord.FFmpegPCMAudio(preview, **ffmpeg_options)
         ctx.voice_client.play(source, after=lambda e: check_queue(ctx))
-        await ctx.send(f"Tocando agora: **{title}**")
+        await ctx.send(f"Tocando agora: **{title}** (prévia de 30s)")
 
 
 @bot.command(name="skip")
